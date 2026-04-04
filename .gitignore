@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 *.wav
 .env
+.DS_Store
+scratch/
