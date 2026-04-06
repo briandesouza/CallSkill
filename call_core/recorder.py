@@ -17,6 +17,7 @@ import collections
 import io
 import queue
 import wave
+from pathlib import Path
 
 import sounddevice as sd
 import webrtcvad
@@ -165,7 +166,9 @@ if __name__ == "__main__":
     duration_sec = len(pcm) / (SAMPLE_RATE * 2)  # 2 bytes per sample
     print(f"Recorded {duration_sec:.1f}s of audio ({len(pcm)} bytes)")
 
-    out_path = "test_recording.wav"
+    scratch_dir = Path("scratch")
+    scratch_dir.mkdir(exist_ok=True)
+    out_path = scratch_dir / "test_recording.wav"
     with open(out_path, "wb") as f:
         f.write(pcm_to_wav(pcm))
     print(f"Saved to {out_path}")

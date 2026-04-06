@@ -1,149 +1,181 @@
-# claude-call — Spec
+# call — Spec
 
-A Claude Code skill that lets you have a hands-free voice conversation with Claude Code in your terminal. You speak, Claude listens, thinks, and speaks back. No keyboard needed after activation.
+A portable call mode for terminal coding agents. Codex CLI is the first host target. Claude Code CLI is planned as a later adapter. You speak, the agent listens, thinks, and speaks back. No keyboard needed after activation.
 
 ## How it works
 
-1. User opens Claude Code, types `/call`
-2. Claude enters conversational voice mode
-3. Mic opens, listens for user speech
-4. When user stops speaking (silence detection), the audio is transcribed and sent to Claude
-5. Claude responds conversationally (short, spoken-word style)
-6. Response is spoken back via text-to-speech
-7. Mic opens again, waiting for the next utterance
-8. Repeat until user says "end call"
-9. Conversation context is preserved — user can continue in normal keyboard mode
+1. User invokes the host adapter for call mode.
+2. The host adapter switches the agent into conversational call mode.
+3. Mic opens and listens for user speech.
+4. When the user stops speaking, the audio is transcribed and returned to the agent.
+5. The agent responds conversationally in short spoken-word style.
+6. The response is spoken back via text-to-speech.
+7. Mic opens again, waiting for the next utterance.
+8. Repeat until the user says "end call" or "goodbye".
+9. Conversation context is preserved in the same host session after the call ends.
 
 ## Architecture
 
-**Approach: MCP Server + Claude Code Skill**
+**Approach: portable core + portable MCP transport + thin host adapters**
 
-The voice I/O lives in an MCP server. The `/call` skill sets Claude into conversational mode and instructs it to use the MCP tools in a loop. Claude stays in the driver's seat — it can still read files, search code, explore the codebase, and reference the full conversation history.
+- `call_core/` owns recording, silence detection, STT, TTS, and playback.
+- `adapters/mcp_server.py` exposes portable MCP tools that any host can use.
+- Host adapters define invocation UX, prompt behavior, timeout config, and install steps for a specific environment.
 
-```
-/call skill (sets behavior) + MCP server (provides tools)
+Current priority is Codex CLI first. Claude Code CLI comes later as a thin adapter over the same core and MCP tool contract.
 
-Claude's loop:
-  call_listen() → user speech → STT → text returned to Claude
-  Claude thinks, generates short response
-  call_speak("response") → TTS → audio plays through speakers
-  call_listen() → repeat
+```text
+Host adapter (Codex first, Claude later) + MCP server (portable tools)
+
+Agent loop:
+  call_listen() -> user speech -> STT -> text returned to agent
+  Agent thinks, generates short response
+  call_speak("response") -> TTS -> audio plays through speakers
+  call_listen() -> repeat
 ```
 
 **Why this approach over a wrapper script:**
-- Stays inside Claude Code — full access to codebase, tools, conversation history
-- User can say "look at the auth module" and Claude can actually read it
-- Conversation context preserved after the call ends
-- Natural integration point for Claude Code users
+- Stays inside the coding agent environment with full access to codebase, tools, and conversation history
+- Keeps the audio implementation reusable across multiple hosts
+- Preserves conversation context after the call ends
+- Makes Codex-first delivery compatible with a later Claude adapter
 
-## MCP Server
+## Portable MCP transport
 
 ### Tools
 
 **`call_listen()`**
-- Opens microphone, records audio
-- Uses silence detection to determine when user is done speaking
+- Opens microphone and records audio
+- Uses silence detection to determine when the user is done speaking
 - Sends audio to ElevenLabs STT (Scribe) for transcription
-- Returns transcribed text to Claude
-- Sends MCP progress notifications every 5-10 seconds to prevent timeout
-- Returns `{"status": "silence", "text": ""}` if no speech detected within 30 seconds (Claude should call again)
+- Returns transcribed text to the host agent
+- Sends MCP progress notifications every 5-10 seconds to prevent host tool timeouts
+- Returns `{"status": "silence", "text": ""}` if no speech is detected within 30 seconds
 - Returns `{"error": "mic_permission_denied"}` if mic access is blocked
 
 **`call_speak(text)`**
 - Sends text to ElevenLabs TTS API
-- Plays audio through speakers (blocking — waits until playback finishes)
+- Plays audio through speakers
+- Blocks until playback finishes
 - Returns when done
 
 **`call_end()`**
-- Cleanup (close any audio resources)
+- Cleans up any audio resources
 - Returns confirmation
 
 ### Silence detection
 
 Simple state machine using `webrtcvad` (Google's WebRTC Voice Activity Detection):
 
-```
+```text
 IDLE (waiting for speech)
-  │ webrtcvad detects speech frames
-  ▼
+  | webrtcvad detects speech frames
+  v
 RECORDING (user is talking)
-  │ 2 seconds of non-speech frames
-  ▼
-DONE → send audio to STT → return text
+  | 2 seconds of non-speech frames
+  v
+DONE -> send audio to STT -> return text
 ```
 
 Default silence threshold: 2 seconds. Start here, tune based on feedback.
 
-`webrtcvad` classifies 20ms audio frames as speech/not-speech. Lightweight, no ML model to download, well-tested.
+`webrtcvad` classifies 20 ms audio frames as speech or non-speech. It is lightweight, requires no model download, and is well-tested.
 
-### MCP timeout handling
+### Timeout handling
 
-Claude Code's default MCP tool timeout is 10 seconds. `call_listen()` can block for much longer.
+Different hosts have different MCP timeout defaults. `call_listen()` can block much longer than a normal tool call.
 
-**Solution:**
-1. Install script sets `MCP_TIMEOUT=300000` (5 minutes) in Claude Code settings
-2. MCP server sends progress notifications every 5-10 seconds during recording
-3. `call_listen()` has a 30-second max-wait for speech start — returns empty if no speech, Claude calls again
+**Portable requirements:**
+1. The host adapter must configure a longer timeout for `call_listen()`. Recommended starting point: 5 minutes.
+2. The MCP server must send progress notifications every 5-10 seconds during recording.
+3. `call_listen()` should return silence after a 30-second max wait for speech start so the host adapter can immediately retry.
+
+Host-specific timeout settings belong in the adapter layer, not in `call_core/` or the MCP server logic.
 
 ### Half-duplex turn-taking
 
-- Mic is ONLY open during `call_listen()`
-- During Claude's response and `call_speak()`, mic is closed
-- No echo cancellation needed (mic and speaker never active simultaneously)
+- Mic is only open during `call_listen()`
+- During the agent response and `call_speak()`, mic is closed
+- No echo cancellation needed because mic and speaker are never active simultaneously
 - No interruption handling in V0
 
-## The /call Skill
+## Shared conversation rules
 
-The skill file (`call.md`) sets Claude's behavior for the duration of the call.
+These rules belong in the host adapter prompt, regardless of whether the host is Codex CLI or Claude Code CLI.
 
-### Key prompt elements
+### Loop control
 
-**Loop control:**
+```text
+CRITICAL: After EVERY call_speak(), immediately call call_listen() again.
+The only exit is the user saying "end call" or "goodbye".
 ```
-CRITICAL: After EVERY call_speak(), you MUST immediately call call_listen().
-There are ZERO exceptions. The ONLY exit is the user saying "end call" or "goodbye".
-```
 
-**Conversational behavior:**
-- Short responses, 2-3 sentences unless user asks for detail
+### Conversational behavior
+
+- Short responses, 2-3 sentences unless the user asks for detail
 - No markdown, bullet points, code blocks, or special formatting
-- Refer to code concepts naturally ("the auth handler" not "auth_handler.py")
+- Refer to code concepts naturally
 - Speak naturally, as in a real conversation
-- CAN read files, search code, explore — just discuss findings verbally
-- Do NOT make code changes, write files, or edit anything unless user explicitly says "go ahead", "do it", or "implement that"
-- If user asks to implement something: "Sure, I'll do that after we end the call. Say 'end call' when you're ready."
+- The agent may read files, search code, and explore, but should discuss findings verbally
+- Do not make code changes or write files unless the user explicitly asks for implementation
+- If the user asks to implement something mid-call: "Sure, I'll do that after we end the call. Say 'end call' when you're ready."
 
-**Onboarding (mic permissions):**
-```
-If call_listen() returns a permission error, guide the user:
-"I need microphone access. You should see a permission popup from your terminal app —
-click Allow. If not, go to System Settings > Privacy & Security > Microphone
-and enable it for your terminal."
+### Onboarding (mic permissions)
+
+```text
+If call_listen() returns a permission error, tell the user:
+"I need microphone access. You should see a permission popup from your terminal app - click Allow.
+If not, go to System Settings > Privacy & Security > Microphone and enable it for your terminal."
 Then try call_listen() again.
 ```
 
-**On silence/empty returns:**
-```
-If call_listen() returns empty/silence, the user hasn't spoken yet.
+### On silence or empty returns
+
+```text
+If call_listen() returns empty or silence, the user has not spoken yet.
 Call call_listen() again immediately. Do not comment on the silence.
 ```
 
-## STT and TTS Provider
+## Host adapters
+
+Host adapters are thin layers that set invocation UX, prompt behavior, install steps, and host-specific config. They should never reimplement audio logic or change the MCP tool contract.
+
+### Phase 4A: Codex CLI adapter
+
+- Provide a Codex skill at `.agents/skills/call/SKILL.md`
+- Optionally add `.agents/skills/call/agents/openai.yaml` for UI metadata and MCP dependency hints
+- Register the MCP server in Codex CLI and set a longer tool timeout
+- Prefer explicit invocation via `$call` at first; allow implicit invocation later only if the trigger behavior is reliable
+- Keep Codex-specific install and configuration steps separate from the portable MCP server
+
+### Phase 4B: Claude Code CLI adapter
+
+- Provide the Claude-side command or skill wrapper, currently planned as `commands/call.md`
+- Apply Claude-specific timeout and installation steps in the adapter layer
+- Reuse the same MCP tools and shared conversation rules from the Codex-first implementation
+- Do not fork the audio logic or MCP semantics for Claude unless a host limitation forces it
+
+## STT and TTS provider
 
 **MVP: ElevenLabs for both**
 
 - STT: ElevenLabs Scribe API (`POST /v1/speech-to-text`)
 - TTS: ElevenLabs TTS API (`POST /v1/text-to-speech/{voice_id}`)
-- User provides their own API key via `ELEVENLABS_API_KEY` env var
+- User provides their own API key via `ELEVENLABS_API_KEY`
+- STT default model: `scribe_v2`
+- TTS default voice: `tMvyQtpCVQ0DkixuYm6J`, overridable via `ELEVENLABS_VOICE_ID`
+- TTS default model: `eleven_flash_v2_5`, overridable via `ELEVENLABS_TTS_MODEL_ID`
+- V0 playback uses MP3 output (`mp3_44100_128`) plus macOS `afplay`
 
 **Why ElevenLabs for MVP:**
 - Both STT and TTS from one provider, one API key
-- Simple HTTP calls (~20 lines of code)
-- High quality output
+- Simple HTTP calls
+- High-quality output
 - No model downloads
 - Fast setup for users
 
 **Future: swappable providers** via simple interface:
+
 ```python
 class STTProvider:
     def transcribe(self, audio_bytes: bytes) -> str: ...
@@ -151,38 +183,58 @@ class STTProvider:
 class TTSProvider:
     def synthesize(self, text: str) -> bytes: ...
 ```
-Later add: local Whisper + Piper, OpenAI, etc.
+
+Later options may include local Whisper and Piper, OpenAI, and other providers.
 
 ## Project structure
 
-```
-claude-call/
-├── README.md                     # for users: what it does, install, demo GIF
-├── LICENSE                       # MIT
-├── CONTRIBUTING.md               # for contributors: setup, PR guidelines
-├── SPEC.md                       # this file: design decisions and architecture
-├── CLAUDE.md                     # instructions for Claude Code agents working on this
-├── .env.example                  # ELEVENLABS_API_KEY=your_key_here
-│
-├── call_core/                    # backend-agnostic audio engine
+```text
+call/
+├── SPEC.md
+├── CLAUDE.md
+├── memory/
+│   └── implementation_progress.md
+├── call_core/
 │   ├── __init__.py
-│   ├── recorder.py               # mic recording + silence detection (webrtcvad)
-│   ├── stt.py                    # ElevenLabs STT
-│   ├── tts.py                    # ElevenLabs TTS
-│   └── audio.py                  # audio playback utilities
-│
+│   ├── recorder.py
+│   ├── stt.py
+│   ├── tts.py
+│   └── audio.py
 ├── adapters/
-│   └── mcp_server.py             # MCP server exposing call_listen, call_speak, call_end
-│
+│   └── mcp_server.py
+├── .agents/
+│   └── skills/
+│       └── call/
+│           ├── SKILL.md
+│           └── agents/
+│               └── openai.yaml
 ├── commands/
-│   └── call.md                   # the /call skill for Claude Code
-│
-├── requirements.txt              # Python dependencies
-├── pyproject.toml                # package metadata
-└── install.sh                    # one-command setup
+│   └── call.md
+├── requirements.txt
+└── pyproject.toml
 ```
 
-`call_core/` is deliberately backend-agnostic — no Claude Code or MCP concepts. This allows future reuse for a standalone CLI wrapper that supports Codex or other tools.
+Not every adapter file exists yet. The important boundary is:
+- `call_core/` stays backend-agnostic
+- `adapters/mcp_server.py` stays host-neutral
+- Codex and Claude integration assets live in separate adapter layers
+
+## Implementation phases
+
+- **Phase 1: Recorder**
+  - `call_core/recorder.py`
+- **Phase 2: Core speech providers + playback**
+  - `call_core/stt.py`
+  - `call_core/tts.py`
+  - `call_core/audio.py`
+- **Phase 3: Portable MCP transport**
+  - `adapters/mcp_server.py`
+- **Phase 4A: Codex CLI skill + Codex install/config**
+  - `.agents/skills/call/SKILL.md`
+  - Codex MCP registration and timeout configuration
+- **Phase 4B: Claude Code skill + Claude install/config**
+  - `commands/call.md`
+  - Claude-specific install and timeout configuration
 
 ## Latency budget (per turn)
 
@@ -191,61 +243,64 @@ claude-call/
 | Silence detection buffer | 2s after user stops |
 | ElevenLabs STT | 0.5-1.5s |
 | MCP tool return overhead | ~0.5s |
-| Claude thinking + response | 1-3s |
+| Agent thinking + response | 1-3s |
 | MCP tool call overhead | ~0.5s |
 | ElevenLabs TTS | 0.5-1s |
 | **Total after user stops speaking** | **~5-8s** |
 
-Acceptable for conversational use. Streaming TTS (future optimization) could shave 1-2s.
+Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 
 ## MVP scope (V0)
 
-**In scope:**
-- MCP server with `call_listen()`, `call_speak()`, `call_end()`
-- `/call` skill with conversational mode + loop instructions
+**Current target:**
+- Phase 1 through Phase 3
+- Phase 4A Codex CLI adapter
 - ElevenLabs STT + TTS
-- Silence detection via webrtcvad
-- Half-duplex (mic off during response)
+- Silence detection via `webrtcvad`
+- Half-duplex turn-taking
 - macOS support
-- Install script
-- Basic README
+- macOS playback via `afplay`
+- Basic README and setup documentation
 
-**Out of scope (future versions):**
-- Voice Activity Detection with interruption (V1)
-- Local model support — Whisper, Piper (V1)
-- Echo cancellation (V1)
-- Streaming TTS (V1)
-- Standalone CLI for Codex/other tools (V2)
-- Linux support (V1)
-- Configurable silence threshold (V1)
-- Multiple ElevenLabs voice options (V1)
+**Planned later:**
+- Phase 4B Claude Code CLI adapter
+
+**Out of scope for V0:**
+- Voice activity detection with interruption
+- Local model support such as Whisper or Piper
+- Echo cancellation
+- Streaming TTS
+- Linux support
+- Configurable silence threshold
+- Multiple ElevenLabs voice options
 
 ## Implementation order
 
-1. **call_core/recorder.py** — mic recording + silence detection with webrtcvad
-2. **call_core/stt.py** — ElevenLabs STT integration
-3. **call_core/tts.py** — ElevenLabs TTS integration
-4. **call_core/audio.py** — audio playback
-5. **adapters/mcp_server.py** — MCP server wrapping the core tools
-6. **commands/call.md** — the /call skill prompt
-7. **install.sh** — setup script
-8. **README.md** — user-facing docs
-9. **Testing + iteration** — end-to-end testing of the full loop
+1. `call_core/recorder.py` - mic recording + silence detection with `webrtcvad`
+2. `call_core/stt.py` - ElevenLabs STT integration
+3. `call_core/tts.py` - ElevenLabs TTS integration
+4. `call_core/audio.py` - audio playback
+5. `adapters/mcp_server.py` - portable MCP server wrapping the core tools
+6. `.agents/skills/call/SKILL.md` - Codex CLI skill prompt
+7. Codex MCP registration and timeout configuration
+8. `commands/call.md` - Claude Code adapter
+9. Claude-specific install and timeout configuration
+10. README and end-to-end testing
 
 ## Key design decisions log
 
 | Decision | Choice | Why |
 |---|---|---|
-| Architecture | MCP server + skill (not wrapper) | Stays inside Claude Code, preserves context |
-| Naming | "call" not "voice" | Avoid confusion with Claude's voice mode |
+| Architecture | Portable core + portable MCP transport + host adapters | Enables Codex first, Claude later, without rewriting audio logic |
+| Host priority | Codex CLI first | Fastest path to first integrated host while keeping Claude viable later |
+| MCP tool contract | Stable across hosts | Minimizes adapter-specific branching |
+| Naming | "call" not "voice" | Avoid confusion with existing voice features in host tools |
 | STT/TTS provider | ElevenLabs (MVP) | Simplest integration, one API key, good quality |
-| Silence detection | webrtcvad | Lightweight, no model downloads, reliable |
+| Silence detection | `webrtcvad` | Lightweight, no model downloads, reliable |
 | Turn-taking | Half-duplex, auto silence detection | Hands-free UX without concurrency complexity |
 | Default silence threshold | 2 seconds | Balance between responsiveness and mid-thought pauses |
-| During response | Mic off, ignore input | Avoids echo/interruption complexity for V0 |
+| During response | Mic off, ignore input | Avoids echo and interruption complexity for V0 |
 | Code changes during call | Disabled unless explicitly asked | Keeps call conversational and exploratory |
-| Loop recovery | Strong prompting, no special mechanism | Sufficient for MVP, revisit if needed |
-| macOS mic permissions | Handled via skill onboarding prompt | No extra code, Claude guides user through it |
-| Text formatting for TTS | Handled via skill prompt (conversational style) | No programmatic markdown stripping needed |
-| License | MIT | Most permissive, contributor-friendly |
-| Python (MCP server) | Yes | Best audio ecosystem (sounddevice, webrtcvad) |
+| Loop recovery | Strong prompting plus silence retry | Sufficient for MVP, revisit if needed |
+| Text formatting for TTS | Handled in adapter prompt | Avoids programmatic markdown stripping |
+| Python for core and MCP | Yes | Best audio ecosystem |

@@ -1,0 +1,2 @@
+- [Implementation progress](implementation_progress.md) — which phases are complete, what's next
+- [Use scratch/ for temp files](feedback_scratch_dir.md) — never create temp files in project root

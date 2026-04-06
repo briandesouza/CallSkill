@@ -1,2 +1,4 @@
 sounddevice
 webrtcvad
+requests
+urllib3<2
