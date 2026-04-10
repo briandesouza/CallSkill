@@ -16,10 +16,18 @@ from __future__ import annotations
 import collections
 import io
 import queue
+import warnings
 import wave
 from pathlib import Path
 
 import sounddevice as sd
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+    module="webrtcvad",
+)
 import webrtcvad
 
 SAMPLE_RATE = 16000

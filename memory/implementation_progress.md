@@ -24,18 +24,25 @@ type: project
   - Test via: `.venv/bin/python -m call_core.stt` and `.venv/bin/python -m call_core.tts "hello"`
   - Manual validation on macOS completed: STT transcribed live mic input and TTS playback succeeded through `afplay`
 
-- **Phase 3: Portable MCP transport** — NOT STARTED
-  - `adapters/mcp_server.py` — portable MCP server exposing `call_listen()`, `call_speak()`, `call_end()`
-  - Must stay host-neutral: no Claude-specific config or prompt behavior inside the server
+- **Phase 3: Portable MCP transport** — COMPLETE
+  - `adapters/mcp_server.py` — FastMCP server exposing `call_listen()`, `call_speak()`, `call_end()`
+  - Structured JSON tool contract:
+    - `call_listen()` returns `status`, `text`, `error`
+    - `call_speak()` / `call_end()` return `status`, `error`
+  - Heartbeat progress notifications emitted every 5 seconds across idle listening and active recording
+  - Error normalization implemented for mic permission/device failures, STT failures, TTS failures, and playback failures
+  - Validated locally with mocked tool calls and a stdio MCP client calling `call_end()`
+  - `requirements.txt` now includes `mcp[cli]` for SDK + local inspector/client tooling
+  - Current repo `.venv` is Python 3.9.6, but the official `mcp` SDK requires Python 3.10+; use Python 3.11+ for phase 3 and phase 4A testing
 
-- **Phase 4A: Codex CLI skill + Codex install/config** — NOT STARTED
+- **Phase 4B: Claude Code skill + Claude install/config** — NOT STARTED (now first priority)
+  - `commands/call.md`
+  - Claude-specific MCP registration, timeout config, install steps
+
+- **Phase 4A: Codex CLI skill + Codex install/config** — NOT STARTED (deferred)
   - `.agents/skills/call/SKILL.md`
   - `.agents/skills/call/agents/openai.yaml` — optional Codex metadata
   - Codex MCP registration + timeout config
-
-- **Phase 4B: Claude Code skill + Claude install/config** — NOT STARTED
-  - `commands/call.md`
-  - Claude-specific install/config
 
 **Why:** User wants any new agent or conversation to know exactly where to pick up.
 **How to apply:** Check this memory before starting work. Update it as phases complete.

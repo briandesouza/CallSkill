@@ -1,6 +1,6 @@
 # call — Spec
 
-A portable call mode for terminal coding agents. Codex CLI is the first host target. Claude Code CLI is planned as a later adapter. You speak, the agent listens, thinks, and speaks back. No keyboard needed after activation.
+A portable call mode for terminal coding agents. Claude Code CLI is the first host target. Codex CLI is planned as a later adapter. You speak, the agent listens, thinks, and speaks back. No keyboard needed after activation.
 
 ## How it works
 
@@ -22,10 +22,10 @@ A portable call mode for terminal coding agents. Codex CLI is the first host tar
 - `adapters/mcp_server.py` exposes portable MCP tools that any host can use.
 - Host adapters define invocation UX, prompt behavior, timeout config, and install steps for a specific environment.
 
-Current priority is Codex CLI first. Claude Code CLI comes later as a thin adapter over the same core and MCP tool contract.
+Current priority is Claude Code CLI first. Codex CLI comes later as a thin adapter over the same core and MCP tool contract.
 
 ```text
-Host adapter (Codex first, Claude later) + MCP server (portable tools)
+Host adapter (Claude first, Codex later) + MCP server (portable tools)
 
 Agent loop:
   call_listen() -> user speech -> STT -> text returned to agent
@@ -42,26 +42,45 @@ Agent loop:
 
 ## Portable MCP transport
 
+All portable MCP tools return JSON objects. The tool contract should stay stable
+across hosts so Codex and Claude adapters can branch on `status` without
+host-specific parsing.
+
 ### Tools
 
 **`call_listen()`**
 - Opens microphone and records audio
 - Uses silence detection to determine when the user is done speaking
 - Sends audio to ElevenLabs STT (Scribe) for transcription
-- Returns transcribed text to the host agent
-- Sends MCP progress notifications every 5-10 seconds to prevent host tool timeouts
-- Returns `{"status": "silence", "text": ""}` if no speech is detected within 30 seconds
-- Returns `{"error": "mic_permission_denied"}` if mic access is blocked
+- Returns a JSON object with this shape:
+
+```json
+{"status":"ok","text":"open recorder.py","error":null}
+{"status":"silence","text":"","error":null}
+{"status":"error","text":"","error":"mic_permission_denied"}
+```
+
+- `status="ok"` means speech was captured and transcribed successfully
+- `status="silence"` means no speech was detected within 30 seconds
+- `status="error"` means the tool failed in a way the host adapter should handle
+- `error` should be a stable machine-readable code
+- MVP error codes:
+  - `mic_permission_denied`
+  - `mic_unavailable`
+  - `stt_failed`
+- Sends MCP progress notifications every 5 seconds during the full listen lifecycle, including initial idle waiting and active recording, to prevent host tool timeouts
 
 **`call_speak(text)`**
 - Sends text to ElevenLabs TTS API
 - Plays audio through speakers
 - Blocks until playback finishes
-- Returns when done
+- Returns `{"status":"ok","error":null}` on success
+- Returns `{"status":"error","error":"tts_failed"}` or `{"status":"error","error":"playback_failed"}` on failure
 
 **`call_end()`**
 - Cleans up any audio resources
-- Returns confirmation
+- Returns `{"status":"ok","error":null}`
+- In V0 this may be a no-op confirmation if there are no long-lived resources to release
 
 ### Silence detection
 
@@ -87,7 +106,7 @@ Different hosts have different MCP timeout defaults. `call_listen()` can block m
 
 **Portable requirements:**
 1. The host adapter must configure a longer timeout for `call_listen()`. Recommended starting point: 5 minutes.
-2. The MCP server must send progress notifications every 5-10 seconds during recording.
+2. The MCP server must send progress notifications every 5 seconds for the full `call_listen()` lifecycle, including the idle wait before speech starts.
 3. `call_listen()` should return silence after a 30-second max wait for speech start so the host adapter can immediately retry.
 
 Host-specific timeout settings belong in the adapter layer, not in `call_core/` or the MCP server logic.
@@ -129,10 +148,16 @@ If not, go to System Settings > Privacy & Security > Microphone and enable it fo
 Then try call_listen() again.
 ```
 
-### On silence or empty returns
+This path corresponds to:
+
+```json
+{"status":"error","text":"","error":"mic_permission_denied"}
+```
+
+### On silence returns
 
 ```text
-If call_listen() returns empty or silence, the user has not spoken yet.
+If call_listen() returns status="silence", the user has not spoken yet.
 Call call_listen() again immediately. Do not comment on the silence.
 ```
 
@@ -254,7 +279,7 @@ Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 
 **Current target:**
 - Phase 1 through Phase 3
-- Phase 4A Codex CLI adapter
+- Phase 4B Claude Code CLI adapter
 - ElevenLabs STT + TTS
 - Silence detection via `webrtcvad`
 - Half-duplex turn-taking
@@ -263,7 +288,7 @@ Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 - Basic README and setup documentation
 
 **Planned later:**
-- Phase 4B Claude Code CLI adapter
+- Phase 4A Codex CLI adapter
 
 **Out of scope for V0:**
 - Voice activity detection with interruption
@@ -287,12 +312,45 @@ Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 9. Claude-specific install and timeout configuration
 10. README and end-to-end testing
 
+## Phase 3 validation
+
+Phase 3 should be validated at the MCP transport layer before any host adapter
+testing. Do not rely on the Codex skill to validate phase 3 behavior.
+
+### 1. Terminal smoke tests for `adapters/mcp_server.py`
+
+- `call_listen()` with normal speech returns `status="ok"` and a transcript in `text`
+- `call_listen()` with no speech returns `status="silence"` after ~30 seconds
+- Mic permission or device failures return `status="error"` with the expected error code
+- `call_speak()` blocks until playback finishes and then returns `status="ok"`
+- `call_end()` returns `status="ok"`
+
+### 2. MCP transport harness or inspector
+
+- Use a tiny local MCP client or inspector harness to call the tools over MCP, not just as in-process Python functions
+- Confirm tool schemas exactly match the contract
+- Confirm progress notifications are emitted every 5 seconds while waiting for speech and while recording
+- Confirm error responses arrive with the same machine-readable codes over the transport
+
+### 3. Codex adapter testing in Phase 4A
+
+- Validate `$call` invocation
+- Validate longer Codex timeout configuration for `call_listen()`
+- Validate prompt loop behavior
+- Validate silence retry behavior
+- Validate spoken conversational style
+
+### 4. Claude adapter testing in Phase 4B
+
+- Validate the same portable MCP contract under the Claude-side adapter
+- Validate Claude-specific timeout and invocation wiring without changing the tool semantics
+
 ## Key design decisions log
 
 | Decision | Choice | Why |
 |---|---|---|
 | Architecture | Portable core + portable MCP transport + host adapters | Enables Codex first, Claude later, without rewriting audio logic |
-| Host priority | Codex CLI first | Fastest path to first integrated host while keeping Claude viable later |
+| Host priority | Claude Code CLI first | Fastest path to first integrated host while keeping Codex viable later |
 | MCP tool contract | Stable across hosts | Minimizes adapter-specific branching |
 | Naming | "call" not "voice" | Avoid confusion with existing voice features in host tools |
 | STT/TTS provider | ElevenLabs (MVP) | Simplest integration, one API key, good quality |
@@ -303,4 +361,7 @@ Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 | Code changes during call | Disabled unless explicitly asked | Keeps call conversational and exploratory |
 | Loop recovery | Strong prompting plus silence retry | Sufficient for MVP, revisit if needed |
 | Text formatting for TTS | Handled in adapter prompt | Avoids programmatic markdown stripping |
+| `call_listen()` response shape | Always JSON with `status`, `text`, and `error` | Keeps the MCP contract stable across hosts and edge cases |
+| Progress heartbeats | Every 5 seconds across idle + recording | Reduces host timeout risk during the full listen lifecycle |
+| Phase 3 testing | MCP transport first, host skill second | Separates transport bugs from adapter bugs |
 | Python for core and MCP | Yes | Best audio ecosystem |
