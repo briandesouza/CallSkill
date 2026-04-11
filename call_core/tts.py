@@ -40,7 +40,9 @@ class ElevenLabsTTSProvider:
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         if not self.api_key:
             raise SpeechConfigurationError(
-                "ELEVENLABS_API_KEY is required for text-to-speech."
+                "ELEVENLABS_API_KEY is not set. "
+                "Export it in your shell (export ELEVENLABS_API_KEY=your-key) "
+                "and restart Claude Code."
             )
 
         self.voice_id = voice_id or os.getenv("ELEVENLABS_VOICE_ID", DEFAULT_TTS_VOICE_ID)

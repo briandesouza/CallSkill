@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "call-mode"
+version = "0.1.0"
+description = "Portable call mode for terminal coding agents — hands-free conversation via mic and speakers"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Brian Nunes De Souza" },
+]
+keywords = ["claude", "speech", "mcp", "coding-agent", "call"]
+
+dependencies = [
+    "sounddevice",
+    "webrtcvad",
+    "requests",
+    "urllib3<2",
+    "mcp[cli]",
+]
+
+[project.urls]
+Homepage = "https://github.com/briandesouza/CallSkill"
+Repository = "https://github.com/briandesouza/CallSkill"
+
+[tool.setuptools.packages.find]
+include = ["call_core*", "adapters*"]

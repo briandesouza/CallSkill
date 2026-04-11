@@ -35,9 +35,11 @@ type: project
   - `requirements.txt` now includes `mcp[cli]` for SDK + local inspector/client tooling
   - Current repo `.venv` is Python 3.9.6, but the official `mcp` SDK requires Python 3.10+; use Python 3.11+ for phase 3 and phase 4A testing
 
-- **Phase 4B: Claude Code skill + Claude install/config** — NOT STARTED (now first priority)
-  - `commands/call.md`
-  - Claude-specific MCP registration, timeout config, install steps
+- **Phase 4B: Claude Code skill + Claude install/config** — COMPLETE
+  - `.claude/skills/call/SKILL.md` — skill prompt with startup greeting, main call loop, silence retry, error handling, conversational style rules
+  - `.mcp.json` — MCP server registration with env var passthrough for `ELEVENLABS_API_KEY`
+  - `README.md` — setup docs (local + global install), configuration, troubleshooting
+  - `LICENSE` — MIT
 
 - **Phase 4A: Codex CLI skill + Codex install/config** — NOT STARTED (deferred)
   - `.agents/skills/call/SKILL.md`

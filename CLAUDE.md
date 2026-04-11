@@ -12,7 +12,7 @@ Read `SPEC.md` for the full design spec. That file is the source of truth for ar
 
 - **Core library** (`call_core/`) handles mic recording, silence detection, STT, TTS, and playback
 - **Portable MCP transport** (`adapters/mcp_server.py`) exposes `call_listen()`, `call_speak()`, and `call_end()`
-- **Claude adapter** will live in `commands/call.md`
+- **Claude adapter** lives in `.claude/skills/call/SKILL.md`, registered via `.mcp.json`
 - **Codex adapter** is planned later at `.agents/skills/call/`
 
 ## Key constraints
@@ -32,7 +32,7 @@ Read `SPEC.md` for the full design spec. That file is the source of truth for ar
 1. `call_core/recorder.py` - recorder
 2. `call_core/stt.py`, `call_core/tts.py`, `call_core/audio.py` - core speech providers + playback
 3. `adapters/mcp_server.py` - portable MCP transport
-4. `commands/call.md` - Claude Code skill + Claude install/config
+4. `.claude/skills/call/SKILL.md` + `.mcp.json` - Claude Code skill + install/config
 5. `.agents/skills/call/` - Codex CLI skill + Codex install/config
 
 ## Dependencies

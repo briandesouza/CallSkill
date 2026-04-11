@@ -65,6 +65,7 @@ host-specific parsing.
 - `status="error"` means the tool failed in a way the host adapter should handle
 - `error` should be a stable machine-readable code
 - MVP error codes:
+  - `api_key_missing`
   - `mic_permission_denied`
   - `mic_unavailable`
   - `stt_failed`
@@ -175,7 +176,8 @@ Host adapters are thin layers that set invocation UX, prompt behavior, install s
 
 ### Phase 4B: Claude Code CLI adapter
 
-- Provide the Claude-side command or skill wrapper, currently planned as `commands/call.md`
+- Provide a Claude Code skill at `.claude/skills/call/SKILL.md`, invoked via `/call`
+- Register the MCP server in `.mcp.json` at the project root so Claude Code auto-discovers it
 - Apply Claude-specific timeout and installation steps in the adapter layer
 - Reuse the same MCP tools and shared conversation rules from the Codex-first implementation
 - Do not fork the audio logic or MCP semantics for Claude unless a host limitation forces it
@@ -227,14 +229,17 @@ call/
 │   └── audio.py
 ├── adapters/
 │   └── mcp_server.py
+├── .claude/
+│   └── skills/
+│       └── call/
+│           └── SKILL.md
+├── .mcp.json
 ├── .agents/
 │   └── skills/
 │       └── call/
 │           ├── SKILL.md
 │           └── agents/
 │               └── openai.yaml
-├── commands/
-│   └── call.md
 ├── requirements.txt
 └── pyproject.toml
 ```
@@ -258,7 +263,8 @@ Not every adapter file exists yet. The important boundary is:
   - `.agents/skills/call/SKILL.md`
   - Codex MCP registration and timeout configuration
 - **Phase 4B: Claude Code skill + Claude install/config**
-  - `commands/call.md`
+  - `.claude/skills/call/SKILL.md`
+  - `.mcp.json` for MCP server registration
   - Claude-specific install and timeout configuration
 
 ## Latency budget (per turn)
@@ -308,8 +314,8 @@ Acceptable for conversational use. Streaming TTS could shave 1-2 seconds later.
 5. `adapters/mcp_server.py` - portable MCP server wrapping the core tools
 6. `.agents/skills/call/SKILL.md` - Codex CLI skill prompt
 7. Codex MCP registration and timeout configuration
-8. `commands/call.md` - Claude Code adapter
-9. Claude-specific install and timeout configuration
+8. `.claude/skills/call/SKILL.md` - Claude Code skill
+9. `.mcp.json` - MCP server registration + Claude-specific config
 10. README and end-to-end testing
 
 ## Phase 3 validation

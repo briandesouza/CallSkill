@@ -35,7 +35,9 @@ class ElevenLabsSTTProvider:
         self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
         if not self.api_key:
             raise SpeechConfigurationError(
-                "ELEVENLABS_API_KEY is required for speech-to-text."
+                "ELEVENLABS_API_KEY is not set. "
+                "Export it in your shell (export ELEVENLABS_API_KEY=your-key) "
+                "and restart Claude Code."
             )
 
         self.model_id = model_id

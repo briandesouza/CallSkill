@@ -27,6 +27,7 @@ HEARTBEAT_INTERVAL_SEC = 5.0
 
 ERROR_MIC_PERMISSION_DENIED = "mic_permission_denied"
 ERROR_MIC_UNAVAILABLE = "mic_unavailable"
+ERROR_API_KEY_MISSING = "api_key_missing"
 ERROR_STT_FAILED = "stt_failed"
 ERROR_TTS_FAILED = "tts_failed"
 ERROR_PLAYBACK_FAILED = "playback_failed"
@@ -153,11 +154,14 @@ async def call_listen(ctx: Context) -> ListenResult:
     try:
         pcm_data = await asyncio.to_thread(recorder.record)
     except sd.PortAudioError as exc:
-        await ctx.error(f"Microphone error: {exc}")
-        return ListenResult(status="error", text="", error=_map_mic_error(exc))
+        detail = f"{type(exc).__name__}: {exc}"
+        await ctx.error(f"Microphone error: {detail}")
+        mapped = _map_mic_error(exc)
+        return ListenResult(status="error", text="", error=f"{mapped}: {detail}")
     except Exception as exc:  # pragma: no cover - defensive normalization
-        await ctx.error(f"Unexpected listen failure: {exc}")
-        return ListenResult(status="error", text="", error=ERROR_MIC_UNAVAILABLE)
+        detail = f"{type(exc).__name__}: {exc}"
+        await ctx.error(f"Unexpected listen failure: {detail}")
+        return ListenResult(status="error", text="", error=f"{ERROR_MIC_UNAVAILABLE}: {detail}")
     finally:
         heartbeat_done.set()
         heartbeat_task.cancel()
@@ -171,7 +175,10 @@ async def call_listen(ctx: Context) -> ListenResult:
 
     try:
         transcript = await asyncio.to_thread(ElevenLabsSTTProvider().transcribe, pcm_data)
-    except (SpeechConfigurationError, STTError, ValueError) as exc:
+    except SpeechConfigurationError as exc:
+        await ctx.error(f"Configuration error: {exc}")
+        return ListenResult(status="error", text="", error=ERROR_API_KEY_MISSING)
+    except (STTError, ValueError) as exc:
         await ctx.error(f"Speech-to-text failed: {exc}")
         return ListenResult(status="error", text="", error=ERROR_STT_FAILED)
 
@@ -183,7 +190,10 @@ async def call_speak(text: str, ctx: Context) -> OperationResult:
     """Synthesize speech, play it locally, and block until playback completes."""
     try:
         clip = await asyncio.to_thread(ElevenLabsTTSProvider().synthesize, text)
-    except (SpeechConfigurationError, TTSError, ValueError) as exc:
+    except SpeechConfigurationError as exc:
+        await ctx.error(f"Configuration error: {exc}")
+        return OperationResult(status="error", error=ERROR_API_KEY_MISSING)
+    except (TTSError, ValueError) as exc:
         await ctx.error(f"Text-to-speech failed: {exc}")
         return OperationResult(status="error", error=ERROR_TTS_FAILED)
 

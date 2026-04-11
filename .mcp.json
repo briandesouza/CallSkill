@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "call": {
+      "type": "stdio",
+      "command": ".venv311/bin/python",
+      "args": ["-m", "adapters.mcp_server"],
+      "env": {
+        "ELEVENLABS_API_KEY": "${ELEVENLABS_API_KEY}"
+      }
+    }
+  }
+}
